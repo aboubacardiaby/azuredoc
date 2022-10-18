@@ -1,0 +1,331 @@
+
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "adminUsername": {
+        "type": "string"
+      },
+      "adminPassword": {
+        "type": "securestring"
+      }
+    },
+    "variables": {
+        "location": "[resourceGroup().location]"
+    },
+    "resources": [
+
+        {
+            "type": "Microsoft.Network/applicationSecurityGroups",
+            "apiVersion": "2019-11-01",
+            "name": "frontVMs-asg",
+            "location": "[variables('location')]",
+            "properties": {}
+        },
+        {
+            "type": "Microsoft.Network/applicationSecurityGroups",
+            "apiVersion": "2019-11-01",
+            "name": "dbVMs-asg",
+            "location": "[variables('location')]",
+            "properties": {}
+        },
+        {
+            "name": "front-nsg",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2019-11-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+
+            ],
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "rulesHttp",
+                        "properties": {
+                            "description": "Allow HTTP flows",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "80",
+                            "sourceAddressPrefix": "*",
+                            "destinationApplicationSecurityGroups": [
+                                {
+                                "ID": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+                                }
+                            ],
+                            "access": "Allow",
+                            "priority": 100,
+                            "direction": "Inbound"
+                        }
+                    },
+                    {
+                        "name": "rulesHttps",
+                        "properties": {
+                            "description": "Allow HTTPs flows",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "443",
+                            "sourceAddressPrefix": "*",
+                            "destinationApplicationSecurityGroups": [
+                                {
+                                "ID": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+                                }
+                            ],
+                            "access": "Allow",
+                            "priority": 101,
+                            "direction": "Inbound"
+                        }
+                    },
+                    {
+                        "name": "DenyVnetInBound",
+                        "properties": {
+                            "protocol": "*",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "*",
+                            "sourceAddressPrefix": "VirtualNetwork",
+                            "destinationAddressPrefix": "*",
+                            "access": "Deny",
+                            "priority": 1500,
+                            "direction": "Inbound",
+                            "sourcePortRanges": [],
+                            "destinationPortRanges": [],
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "backend-nsg",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2019-11-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/applicationSecurityGroups', 'dbVMs-asg')]",
+                "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+
+            ],
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "sqlRule",
+                        "properties": {
+                            "description": "Allow Sql Servers flows",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "1433",
+                            "sourceApplicationSecurityGroups": [
+                                {
+                                    "ID":  "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+                                }
+                            ],
+                            "destinationApplicationSecurityGroups": [
+                                {
+                                "ID": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'dbVMs-asg')]"
+                                }
+                            ],
+                            "access": "Allow",
+                            "priority": 100,
+                            "direction": "Inbound"
+                        }
+                    },
+                    {
+                        "name": "DenyVnetInBound",
+                        "properties": {
+                            "protocol": "*",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "*",
+                            "sourceAddressPrefix": "VirtualNetwork",
+                            "destinationAddressPrefix": "*",
+                            "access": "Deny",
+                            "priority": 1500,
+                            "direction": "Inbound",
+                            "sourcePortRanges": [],
+                            "destinationPortRanges": [],
+                            "sourceAddressPrefixes": [],
+                            "destinationAddressPrefixes": []
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "vnet01",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2019-11-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', 'front-nsg')]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', 'backend-nsg')]"
+            ],
+            "location": "[variables('location')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "172.24.0.0/24"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "front",
+                        "properties": {
+                            "addressPrefix": "172.24.0.0/26",
+                            "networkSecurityGroup": {
+                                "ID" : "[resourceId('Microsoft.Network/networkSecurityGroups', 'front-nsg')]"
+                            }
+                        }
+                    },
+                    {
+                        "name": "backend",
+                        "properties": {
+                            "addressPrefix": "172.24.0.64/26",
+                            "networkSecurityGroup": {
+                                "ID" : "[resourceId('Microsoft.Network/networkSecurityGroups', 'backend-nsg')]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "vmfront01-nic",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2019-11-01",
+            "location": "[variables('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/virtualNetworks', 'vnet01')]",
+                "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipConfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet01', 'front')]"
+                            },
+                            "applicationSecurityGroups" : [
+                                {
+                                    "ID": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'frontVMs-asg')]"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "vmdb01-nic",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2019-11-01",
+            "location": "[variables('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/virtualNetworks', 'vnet01')]",
+                "[resourceId('Microsoft.Network/applicationSecurityGroups', 'dbVMs-asg')]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipConfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet01', 'backend')]"
+                            },
+                            "applicationSecurityGroups" : [
+                                {
+                                    "ID": "[resourceId('Microsoft.Network/applicationSecurityGroups', 'dbVMs-asg')]"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "vmfront01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2019-07-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', 'vmfront01-nic')]"
+            ],
+
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "Standard_F2s_v2"
+                },
+                "osProfile": {
+                    "computerName": "vmfront01",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "MicrosoftWindowsServer",
+                        "offer": "WindowsServer",
+                        "sku": "2019-Datacenter-Core",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "name": "vmfront01-os.vhd",
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage"
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', 'vmfront01-nic')]"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "vmdb01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2019-07-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', 'vmdb01-nic')]"
+            ],
+
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "Standard_F2s_v2"
+                },
+                "osProfile": {
+                    "computerName": "vmdb01",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "MicrosoftWindowsServer",
+                        "offer": "WindowsServer",
+                        "sku": "2019-Datacenter-Core",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "name": "vmdb01-os.vhd",
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage"
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', 'vmdb01-nic')]"
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "outputs": {}
+}
+
+ 
